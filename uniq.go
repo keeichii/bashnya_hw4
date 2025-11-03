@@ -18,6 +18,11 @@ type Options struct {
 	NumChars   int
 }
 
+type lineGroup struct {
+	original string
+	count    int
+}
+
 func getComparablePart(s string, opts Options) string {
 	s = skipFields(s, opts.NumFields)
 	s = skipChars(s, opts.NumChars)
@@ -58,54 +63,62 @@ func skipChars(s string, numChars int) string {
 	return s[numChars:]
 }
 
-func processLines(lines []string, opts Options) []string {
+func groupLines(lines []string, opts Options) []lineGroup {
 	if len(lines) == 0 {
 		return nil
 	}
 
-	type lineInfo struct {
-		original string
-		count    int
-	}
+	var groups []lineGroup
+	lastComparable := getComparablePart(lines[0], opts)
+	currentGroup := lineGroup{original: lines[0], count: 1}
 
-	var groups []lineInfo
-	var lastComparable string
-	currentGroup := lineInfo{}
-
-	for i, line := range lines {
-		comparable := getComparablePart(line, opts)
-		
-		if i == 0 {
-			lastComparable = comparable
-			currentGroup = lineInfo{original: line, count: 1}
-		} else if comparable == lastComparable {
+	for i := 1; i < len(lines); i++ {
+		comparable := getComparablePart(lines[i], opts)
+		if comparable == lastComparable {
 			currentGroup.count++
 		} else {
 			groups = append(groups, currentGroup)
 			lastComparable = comparable
-			currentGroup = lineInfo{original: line, count: 1}
+			currentGroup = lineGroup{original: lines[i], count: 1}
 		}
 	}
 	groups = append(groups, currentGroup)
+	return groups
+}
 
+func formatOutput(groups []lineGroup, opts Options) []string {
 	var result []string
 	for _, group := range groups {
-		switch {
-		case opts.Count:
-			result = append(result, fmt.Sprintf("%d %s", group.count, group.original))
-		case opts.Repeated:
-			if group.count > 1 {
-				result = append(result, group.original)
-			}
-		case opts.Unique:
-			if group.count == 1 {
-				result = append(result, group.original)
-			}
-		default:
-			result = append(result, group.original)
+		line := formatGroup(group, opts)
+		if line != "" {
+			result = append(result, line)
 		}
 	}
 	return result
+}
+
+func formatGroup(group lineGroup, opts Options) string {
+	switch {
+	case opts.Count:
+		return fmt.Sprintf("%d %s", group.count, group.original)
+	case opts.Repeated:
+		if group.count > 1 {
+			return group.original
+		}
+		return ""
+	case opts.Unique:
+		if group.count == 1 {
+			return group.original
+		}
+		return ""
+	default:
+		return group.original
+	}
+}
+
+func processLines(lines []string, opts Options) []string {
+	groups := groupLines(lines, opts)
+	return formatOutput(groups, opts)
 }
 
 func parseFlags() Options {
