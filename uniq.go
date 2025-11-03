@@ -54,13 +54,13 @@ func skipFields(s string, numFields int) string {
 }
 
 func skipChars(s string, numChars int) string {
-	if numChars <= 0 || len(s) <= numChars {
-		if numChars > 0 && len(s) <= numChars {
-			return ""
-		}
+	if numChars <= 0 {
 		return s
 	}
-	return s[numChars:]
+	if len(s) > numChars {
+		return s[numChars:]
+	}
+	return ""
 }
 
 func groupLines(lines []string, opts Options) []lineGroup {
@@ -89,31 +89,28 @@ func groupLines(lines []string, opts Options) []lineGroup {
 func formatOutput(groups []lineGroup, opts Options) []string {
 	var result []string
 	for _, group := range groups {
-		line := formatGroup(group, opts)
-		if line != "" {
-			result = append(result, line)
+		if shouldOutput(group, opts) {
+			result = append(result, formatGroup(group, opts))
 		}
 	}
 	return result
 }
 
-func formatGroup(group lineGroup, opts Options) string {
-	switch {
-	case opts.Count:
-		return fmt.Sprintf("%d %s", group.count, group.original)
-	case opts.Repeated:
-		if group.count > 1 {
-			return group.original
-		}
-		return ""
-	case opts.Unique:
-		if group.count == 1 {
-			return group.original
-		}
-		return ""
-	default:
-		return group.original
+func shouldOutput(group lineGroup, opts Options) bool {
+	if opts.Repeated {
+		return group.count > 1
 	}
+	if opts.Unique {
+		return group.count == 1
+	}
+	return true
+}
+
+func formatGroup(group lineGroup, opts Options) string {
+	if opts.Count {
+		return fmt.Sprintf("%d %s", group.count, group.original)
+	}
+	return group.original
 }
 
 func processLines(lines []string, opts Options) []string {
