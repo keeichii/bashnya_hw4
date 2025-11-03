@@ -9,133 +9,86 @@ import (
 	"strings"
 )
 
-// Options содержит все параметры для утилиты uniq, полученные из флагов.
+// Options содержит все параметры для утилиты uniq.
 type Options struct {
-	Count      bool // -c: подсчитать количество вхождений
-	Repeated   bool // -d: выводить только повторяющиеся строки
-	Unique     bool // -u: выводить только уникальные строки
-	IgnoreCase bool // -i: игнорировать регистр
-	NumFields  int  // -f: пропустить N полей в начале строки
-	NumChars   int  // -s: пропустить N символов в начале строки
+	Count      bool
+	Repeated   bool
+	Unique     bool
+	IgnoreCase bool
+	NumFields  int
+	NumChars   int
 }
 
-// getComparablePart возвращает часть строки для сравнения, применяя флаги -f, -s, и -i.
+// --- Логика обработки строк ---
+
+// getComparablePart возвращает часть строки для сравнения, делегируя работу вспомогательным функциям.
 func getComparablePart(s string, opts Options) string {
-	relevantPart := s
-
-	// Применяем -f: пропуск полей.
-	if opts.NumFields > 0 {
-		fieldStartIdx := -1
-		fieldCount := 0
-		inField := false
-		// Ищем индекс начала (N+1)-го поля.
-		for i, r := range s {
-			isSpace := r == ' ' || r == '\t'
-			if !isSpace && !inField {
-				inField = true
-				fieldCount++
-				if fieldCount > opts.NumFields {
-					fieldStartIdx = i
-					break
-				}
-			} else if isSpace {
-				inField = false
-			}
-		}
-
-		if fieldStartIdx != -1 {
-			relevantPart = s[fieldStartIdx:]
-		} else {
-			// Если полей меньше, чем нужно пропустить, строка для сравнения пуста.
-			relevantPart = ""
-		}
-	}
-
-	// Применяем -s: пропуск символов в уже обработанной части строки.
-	if opts.NumChars > 0 {
-		if len(relevantPart) > opts.NumChars {
-			relevantPart = relevantPart[opts.NumChars:]
-		} else {
-			relevantPart = ""
-		}
-	}
-
-	// Применяем -i: игнорирование регистра.
-	if opts.IgnoreCase {
-		relevantPart = strings.ToLower(relevantPart)
-	}
-
-	return relevantPart
+	s = skipFields(s, opts.NumFields)
+	s = skipChars(s, opts.NumChars)
+	s = applyCase(s, opts.IgnoreCase)
+	return s
 }
 
-func main() {
-	// 1. Определяем и парсим флаги командной строки.
-	opts := Options{}
-	flag.BoolVar(&opts.Count, "c", false, "count occurrences of lines")
-	flag.BoolVar(&opts.Repeated, "d", false, "only print duplicate lines")
-	flag.BoolVar(&opts.Unique, "u", false, "only print unique lines")
-	flag.BoolVar(&opts.IgnoreCase, "i", false, "ignore case differences")
-	flag.IntVar(&opts.NumFields, "f", 0, "avoid comparing the first N fields")
-	flag.IntVar(&opts.NumChars, "s", 0, "avoid comparing the first N characters")
-	flag.Parse()
-
-	// 2. Проверяем на взаимоисключающие флаги.
-	if (opts.Count && opts.Repeated) || (opts.Count && opts.Unique) || (opts.Repeated && opts.Unique) {
-		fmt.Fprintln(os.Stderr, "error: options -c, -d, -u are mutually exclusive")
-		fmt.Fprintln(os.Stderr, "usage: uniq [-c | -d | -u] [-i] [-f num] [-s chars] [input_file [output_file]]")
-		os.Exit(1)
+// skipFields пропускает первые N полей в строке.
+func skipFields(s string, numFields int) string {
+	if numFields <= 0 {
+		return s
 	}
 
-	// 3. Настраиваем источники ввода и вывода.
-	var reader io.Reader = os.Stdin
-	var writer io.Writer = os.Stdout
-
-	args := flag.Args()
-	// Если передан input_file, открываем его.
-	if len(args) > 0 {
-		inputFile, err := os.Open(args[0])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error opening input file: %v\n", err)
-			os.Exit(1)
+	fieldStartIdx := -1
+	fieldCount := 0
+	inField := false
+	for i, r := range s {
+		isSpace := r == ' ' || r == '\t'
+		if !isSpace && !inField {
+			inField = true
+			fieldCount++
+			if fieldCount > numFields {
+				fieldStartIdx = i
+				break
+			}
+		} else if isSpace {
+			inField = false
 		}
-		defer inputFile.Close()
-		reader = inputFile
 	}
 
-	// Если передан output_file, создаем его.
-	if len(args) > 1 {
-		outputFile, err := os.Create(args[1])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error creating output file: %v\n", err)
-			os.Exit(1)
-		}
-		defer outputFile.Close()
-		writer = outputFile
+	if fieldStartIdx != -1 {
+		return s[fieldStartIdx:]
 	}
+	return ""
+}
 
-	// 4. Читаем все строки из источника.
-	scanner := bufio.NewScanner(reader)
-	var lines []string
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
+// skipChars пропускает первые N символов в строке.
+func skipChars(s string, numChars int) string {
+	if numChars <= 0 {
+		return s
 	}
-	if err := scanner.Err(); err != nil {
-		fmt.Fprintf(os.Stderr, "error reading input: %v\n", err)
-		os.Exit(1)
+	if len(s) > numChars {
+		return s[numChars:]
 	}
+	return ""
+}
 
-	// 5. Выполняем основную логику.
+// applyCase приводит строку к нижнему регистру, если это необходимо.
+func applyCase(s string, ignoreCase bool) string {
+	if ignoreCase {
+		return strings.ToLower(s)
+	}
+	return s
+}
+
+// processLines выполняет основную логику: подсчет, фильтрацию и форматирование строк.
+func processLines(lines []string, opts Options) []string {
 	if len(lines) == 0 {
-		return
+		return nil
 	}
 
-	lineCounts := make(map[string]int)       // Карта для подсчета вхождений.
-	originalLines := make(map[string]string) // Карта для хранения оригинальной строки.
-	order := make([]string, 0)               // Срез для сохранения порядка появления строк.
+	lineCounts := make(map[string]int)
+	originalLines := make(map[string]string)
+	order := make([]string, 0)
 
 	for _, line := range lines {
 		comparablePart := getComparablePart(line, opts)
-		// Если встречаем новую (по правилам сравнения) строку, запоминаем ее.
 		if _, exists := lineCounts[comparablePart]; !exists {
 			originalLines[comparablePart] = line
 			order = append(order, comparablePart)
@@ -143,29 +96,106 @@ func main() {
 		lineCounts[comparablePart]++
 	}
 
-	// 6. Формируем и выводим результат.
+	var result []string
 	for _, comparablePart := range order {
 		count := lineCounts[comparablePart]
 		originalLine := originalLines[comparablePart]
-
-		// Определяем, нужно ли выводить строку и в каком формате.
 		switch {
 		case opts.Count:
-			// "-c": выводим счетчик и строку.
-			fmt.Fprintf(writer, "%d %s\n", count, originalLine)
+			result = append(result, fmt.Sprintf("%d %s", count, originalLine))
 		case opts.Repeated:
-			// "-d": выводим только строки, встретившиеся >1 раза.
 			if count > 1 {
-				fmt.Fprintln(writer, originalLine)
+				result = append(result, originalLine)
 			}
 		case opts.Unique:
-			// "-u": выводим только строки, встретившиеся 1 раз.
 			if count == 1 {
-				fmt.Fprintln(writer, originalLine)
+				result = append(result, originalLine)
 			}
 		default:
-			// По умолчанию: выводим первую встреченную уникальную строку.
-			fmt.Fprintln(writer, originalLine)
+			result = append(result, originalLine)
 		}
+	}
+	return result
+}
+
+// --- Логика инициализации и I/O ---
+
+// parseFlags разбирает флаги командной строки и возвращает структуру Options.
+func parseFlags() Options {
+	opts := Options{}
+	flag.BoolVar(&opts.Count, "c", false, "count occurrences")
+	flag.BoolVar(&opts.Repeated, "d", false, "only print duplicate lines")
+	flag.BoolVar(&opts.Unique, "u", false, "only print unique lines")
+	flag.BoolVar(&opts.IgnoreCase, "i", false, "ignore case differences")
+	flag.IntVar(&opts.NumFields, "f", 0, "avoid comparing the first N fields")
+	flag.IntVar(&opts.NumChars, "s", 0, "avoid comparing the first N characters")
+	flag.Parse()
+	return opts
+}
+
+// validateOptions проверяет флаги на несовместимость и завершает программу в случае ошибки.
+func validateOptions(opts Options) {
+	if (opts.Count && opts.Repeated) || (opts.Count && opts.Unique) || (opts.Repeated && opts.Unique) {
+		fmt.Fprintln(os.Stderr, "error: options -c, -d, -u are mutually exclusive")
+		os.Exit(1)
+	}
+}
+
+// setupIO настраивает ввод и вывод (файлы или stdin/stdout).
+func setupIO() (io.Reader, io.WriteCloser) {
+	var reader io.Reader = os.Stdin
+	var writer io.WriteCloser = os.Stdout
+
+	args := flag.Args()
+	if len(args) > 0 {
+		inputFile, err := os.Open(args[0])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error opening input file: %v\n", err)
+			os.Exit(1)
+		}
+		reader = inputFile
+	}
+
+	if len(args) > 1 {
+		outputFile, err := os.Create(args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error creating output file: %v\n", err)
+			os.Exit(1)
+		}
+		writer = outputFile
+	}
+	return reader, writer
+}
+
+// readLines читает все строки из заданного io.Reader.
+func readLines(reader io.Reader) []string {
+	var lines []string
+	scanner := bufio.NewScanner(reader)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "error reading input: %v\n", err)
+		os.Exit(1)
+	}
+	return lines
+}
+
+// --- Главная функция ---
+
+func main() {
+	// 1. Конфигурация
+	opts := parseFlags()
+	validateOptions(opts)
+	reader, writer := setupIO()
+	defer writer.Close()
+
+	// 2. Выполнение
+	lines := readLines(reader)
+	outputLines := processLines(lines, opts)
+
+	// 3. Вывод
+	for _, line := range outputLines {
+		fmt.Fprintln(writer, line)
 	}
 }
